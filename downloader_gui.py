@@ -14,39 +14,37 @@ from translations import TRANSLATIONS
 class DownloaderThread(QThread):
     progress = pyqtSignal(int, int)  # current, total
     file_progress = pyqtSignal(int, int, str)  # current, total, filename
+    url_completed = pyqtSignal(int)  # row index
     status = pyqtSignal(str)
     finished = pyqtSignal()
-    error = pyqtSignal(str)
+    error = pyqtSignal(str, int)  # error message, row index
 
-    def __init__(self, downloader, urls):
+    def __init__(self, downloader, urls, current_row):
         super().__init__()
         self.downloader = downloader
         self.urls = urls
+        self.current_row = current_row
         self.is_running = True
-
-    def stop(self):
-        self.is_running = False
-        self.downloader.abort = True
 
     def run(self):
         try:
-            for url in self.urls:
-                if not self.is_running:
-                    break
-                self.status.emit(f"Processing {url}")
-                # Set progress callbacks
-                def progress_callback(current, total):
-                    self.progress.emit(current, total)
-                
-                def file_callback(current, total, filename):
-                    self.file_progress.emit(current, total, filename)
-                
-                self.downloader.set_progress_callback(progress_callback)
-                self.downloader.set_file_callback(file_callback)
-                self.downloader.download_page(url)
+            url = self.urls[self.current_row]
+            self.status.emit(f"Processing {url}")
+            
+            def progress_callback(current, total):
+                self.progress.emit(current, total)
+            
+            def file_callback(current, total, filename):
+                self.file_progress.emit(current, total, filename)
+            
+            self.downloader.set_progress_callback(progress_callback)
+            self.downloader.set_file_callback(file_callback)
+            self.downloader.download_page(url)
+            
+            self.url_completed.emit(self.current_row)
             self.finished.emit()
         except Exception as e:
-            self.error.emit(str(e))
+            self.error.emit(str(e), self.current_row)
 
 class MainWindow(QMainWindow):
     def __init__(self):
@@ -57,6 +55,12 @@ class MainWindow(QMainWindow):
         self.setMinimumSize(600, 400)
         self.downloading = False
         self.setup_font_awesome()
+        self.STATUS_COLORS = {
+            'default': '#FFFFFF',    # white
+            'waiting': '#FFE599',    # light yellow
+            'completed': '#90EE90',  # light green
+            'done': '#E0E0E0',       # light gray
+        }
         self.setup_ui()
         self.load_projects()
         # Set app icon
@@ -309,18 +313,18 @@ class MainWindow(QMainWindow):
             self.urls_table.setRowCount(0)
 
     def create_new_project(self):
-        project_name, ok = QInputDialog.getText(self, "New Project", "Enter project name:")
+        project_name, ok = QInputDialog.getText(self, self.tr['new_project'], self.tr['enter_project_name'])
         if ok and project_name:
             project_dir = os.path.join(os.getcwd(), 'projects', project_name)
             if os.path.exists(project_dir):
-                reply = QMessageBox.question(
-                    self,
-                    "Project Exists",
-                    f"Project '{project_name}' already exists.\nDo you want to use it?",
-                    QMessageBox.Yes | QMessageBox.No,
-                    QMessageBox.No
-                )
-                if reply == QMessageBox.No:
+                msg_box = QMessageBox()
+                msg_box.setWindowTitle(self.tr['project_exists'])
+                msg_box.setText(self.tr['project_exists_use'].format(project_name))
+                yes_btn = msg_box.addButton(self.tr['yes'], QMessageBox.YesRole)
+                no_btn = msg_box.addButton(self.tr['no'], QMessageBox.NoRole)
+                msg_box.exec_()
+                
+                if msg_box.clickedButton() == no_btn:
                     return
                 
             self.project_combo.addItem(project_name)
@@ -339,15 +343,29 @@ class MainWindow(QMainWindow):
                 self.replace_links_cb.setChecked(existing_project.replace_links)
                 self.replace_forms_cb.setChecked(existing_project.replace_forms)
 
+    def set_status_item(self, row, status):
+        """Set status icon and background colors for a row"""
+        # Set status icon
+        status_item = QTableWidgetItem(self.STATUS_ICONS[status])
+        status_item.setFont(self.fa_font)
+        status_item.setTextAlignment(Qt.AlignCenter)
+        self.urls_table.setItem(row, 0, status_item)
+        
+        # Set background colors
+        if status in self.STATUS_COLORS:
+            # Set status column background
+            self.urls_table.item(row, 0).setBackground(QColor(self.STATUS_COLORS[status]))
+            # Set URL column background only if item exists
+            url_item = self.urls_table.item(row, 1)
+            if url_item:
+                url_item.setBackground(QColor(self.STATUS_COLORS[status]))
+
     def add_url(self):
         url = self.url_input.text().strip()
         if url:
             row = self.urls_table.rowCount()
             self.urls_table.insertRow(row)
-            status_item = QTableWidgetItem(self.STATUS_ICONS['default'])
-            status_item.setFont(self.fa_font)
-            status_item.setTextAlignment(Qt.AlignCenter)
-            self.urls_table.setItem(row, 0, status_item)
+            self.set_status_item(row, 'default')
             self.urls_table.setItem(row, 1, QTableWidgetItem(url))
             self.url_input.clear()
 
@@ -362,15 +380,12 @@ class MainWindow(QMainWindow):
         for url in urls:
             row = self.urls_table.rowCount()
             self.urls_table.insertRow(row)
-            status_item = QTableWidgetItem(self.STATUS_ICONS['default'])
-            status_item.setFont(self.fa_font)
-            status_item.setTextAlignment(Qt.AlignCenter)
-            self.urls_table.setItem(row, 0, status_item)
+            self.set_status_item(row, 'default')
             self.urls_table.setItem(row, 1, QTableWidgetItem(url))
 
     def start_download(self):
         if self.downloading:
-            QMessageBox.warning(self, "Warning", "A download is already in progress!")
+            QMessageBox.warning(self, self.tr['warning'], self.tr['download_in_progress'])
             return
 
         # Disable controls during download
@@ -381,38 +396,36 @@ class MainWindow(QMainWindow):
         self.add_url_btn.setEnabled(False)
         
         project_name = self.project_combo.currentText()
-        if project_name == "Create New Project":
-            QMessageBox.warning(self, "Error", "Please select or create a project first")
+        if project_name == self.tr['create_new_project']:
+            QMessageBox.warning(self, self.tr['error'], self.tr['select_project'])
             return
 
-        urls = self.get_urls()
-        if not urls:
-            QMessageBox.warning(self, "Error", "Please add at least one URL")
+        self.urls = self.get_urls()
+        if not self.urls:
+            QMessageBox.warning(self, self.tr['error'], self.tr['add_urls'])
             return
 
         # Check if project folder exists
         project_dir = os.path.join(os.getcwd(), 'projects', project_name)
         if os.path.exists(project_dir):
-            reply = QMessageBox.question(
-                self, 
-                "Project Exists",
-                f"Project '{project_name}' already exists.\nDo you want to redownload all files?",
-                QMessageBox.Yes | QMessageBox.No,
-                QMessageBox.No
-            )
+            msg_box = QMessageBox()
+            msg_box.setWindowTitle(self.tr['project_exists'])
+            msg_box.setText(self.tr['project_exists_msg'].format(project_name))
+            yes_btn = msg_box.addButton(self.tr['yes'], QMessageBox.YesRole)
+            no_btn = msg_box.addButton(self.tr['no'], QMessageBox.NoRole)
+            msg_box.exec_()
             
-            if reply == QMessageBox.No:
+            if msg_box.clickedButton() == no_btn:
                 return
-            # If yes, we'll continue with existing project
 
         # Initialize downloader
-        downloader = WebDownloader(project_name)
-        downloader.replace_links = self.replace_links_cb.isChecked()
-        downloader.replace_forms = self.replace_forms_cb.isChecked()
-        downloader.urls = urls
+        self.downloader = WebDownloader(project_name)
+        self.downloader.replace_links = self.replace_links_cb.isChecked()
+        self.downloader.replace_forms = self.replace_forms_cb.isChecked()
+        self.downloader.urls = self.urls
 
         # Save project data
-        downloader.save_project_data()
+        self.downloader.save_project_data()
         
         # Reset progress bars and labels
         self.progress_bar.setValue(0)
@@ -420,30 +433,63 @@ class MainWindow(QMainWindow):
         self.file_label.setText(f"{self.tr['current_file']}{self.tr['none']}")
         self.time_label.setText(self.tr["time_remain"] + ": --:--")
 
-        # Update status icons to waiting
+        # Set all URLs to waiting status except first one
         for row in range(self.urls_table.rowCount()):
-            status_item = QTableWidgetItem(self.STATUS_ICONS['waiting'])
-            status_item.setFont(self.fa_font)
-            status_item.setTextAlignment(Qt.AlignCenter)
-            self.urls_table.setItem(row, 0, status_item)
+            if row == 0:  # First URL
+                self.set_status_item(row, 'completed')  # Mark as active/downloading
+                self.urls_table.item(row, 0).setBackground(QColor('#90EE90'))  # Light green
+                self.urls_table.item(row, 1).setBackground(QColor('#90EE90'))
+            else:
+                self.set_status_item(row, 'waiting')
+                self.urls_table.item(row, 0).setBackground(QColor('#FFE599'))  # Light yellow
+                self.urls_table.item(row, 1).setBackground(QColor('#FFE599'))
 
-        # Highlight current download in green
-        for row in range(self.urls_table.rowCount()):
-            self.urls_table.item(row, 1).setBackground(QColor('#90EE90'))  # Light green
-
-        # Start download thread
-        self.thread = DownloaderThread(downloader, urls)
-        self.thread.progress.connect(self.update_progress)
-        self.thread.file_progress.connect(self.update_file_progress)
-        self.thread.status.connect(self.update_status)
-        self.thread.finished.connect(self.download_finished)
-        self.thread.error.connect(self.show_error)
+        # Start downloading first URL
+        self.current_row = 0
+        self.start_url_download()
         
         self.downloading = True
         self.download_btn.setEnabled(False)
         self.abort_btn.setEnabled(True)
+
+    def start_url_download(self):
+        """Start downloading the current URL"""
         self.start_time = time.time()
+        
+        # Create and start thread for current URL
+        self.thread = DownloaderThread(self.downloader, self.urls, self.current_row)
+        self.thread.progress.connect(self.update_progress)
+        self.thread.file_progress.connect(self.update_file_progress)
+        self.thread.status.connect(self.update_status)
+        self.thread.url_completed.connect(self.url_completed)
+        self.thread.finished.connect(self.check_next_url)
+        self.thread.error.connect(self.handle_error)
         self.thread.start()
+
+    def url_completed(self, row):
+        """Mark URL as completed"""
+        self.set_status_item(row, 'completed')
+
+    def handle_error(self, error_msg, row):
+        """Handle error for specific URL"""
+        QMessageBox.critical(self, self.tr['error'], f"Error downloading {self.urls[row]}: {error_msg}")
+        self.check_next_url()
+
+    def check_next_url(self):
+        """Check if there are more URLs to download"""
+        # Mark current URL as completed with gray background
+        self.set_status_item(self.current_row, 'completed')
+        self.urls_table.item(self.current_row, 0).setBackground(QColor(self.STATUS_COLORS['done']))
+        self.urls_table.item(self.current_row, 1).setBackground(QColor(self.STATUS_COLORS['done']))
+        
+        self.current_row += 1
+        if self.current_row < len(self.urls):
+            # Highlight new current URL
+            self.urls_table.item(self.current_row, 0).setBackground(QColor(self.STATUS_COLORS['completed']))
+            self.urls_table.item(self.current_row, 1).setBackground(QColor(self.STATUS_COLORS['completed']))
+            self.start_url_download()
+        else:
+            self.download_finished()
 
     def abort_download(self):
         if hasattr(self, 'thread'):
@@ -523,12 +569,8 @@ class MainWindow(QMainWindow):
         self.time_label.setText(self.tr["time_remain"] + ": <b>--:--</b>")
         # Update all status icons to finished
         for row in range(self.urls_table.rowCount()):
-            status_item = QTableWidgetItem(self.STATUS_ICONS['completed'])
-            status_item.setFont(self.fa_font)
-            status_item.setTextAlignment(Qt.AlignCenter)
-            self.urls_table.setItem(row, 0, status_item)
-            self.urls_table.item(row, 1).setBackground(QColor('white'))
-        QMessageBox.information(self, "Success", "Download completed successfully!")
+            self.set_status_item(row, 'completed')
+        QMessageBox.information(self, self.tr['success'], self.tr['download_completed'])
 
     def show_error(self, message):
         self.downloading = False
@@ -538,7 +580,7 @@ class MainWindow(QMainWindow):
 
     def open_git_project(self):
         """Open the GitHub repository in default browser"""
-        repo_url = "https://github.com/magdy-ahmad/web-downloader"  # Replace with your actual repo URL
+        repo_url = "https://github.com/magdy-ragab/WebSitePocket"
         import webbrowser
         webbrowser.open(repo_url)
 

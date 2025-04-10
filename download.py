@@ -291,7 +291,7 @@ class WebDownloader:
             print(f"Error processing {url}: {e}")
 
 def main():
-    print("\nWebsite Downloader")
+    print("\nWebSitePocket")
     print("1. Create new project")
     print("2. Load existing project")
     choice = input("Enter your choice (1/2): ")

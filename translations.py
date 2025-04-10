@@ -1,6 +1,6 @@
 TRANSLATIONS = {
     'en': {
-        'title': 'Website Downloader',
+        'title': 'WebSitePocket',
         'project': 'Project:',
         'new_project': 'New Project',
         'create_new': 'Create New Project',
@@ -26,6 +26,7 @@ TRANSLATIONS = {
         'project_exists': 'Project exists',
         'want_redownload': 'Do you want to redownload all files?',
         'download_success': 'Download completed successfully!',
+        'download_completed': 'Download completed successfully!',
         'time_remain': 'Time remaining',
         'create_new_project': 'Create New Project',
         'url': 'URL',
@@ -34,9 +35,14 @@ TRANSLATIONS = {
         'Time remaining': 'Time remaining',
         'Current file': 'Current file',
         'git_project': 'GitHub Project',
+        'yes': 'Yes',
+        'no': 'No',
+        'project_exists_msg': "Project '{}' already exists.\nDo you want to redownload all files?",
+        'enter_project_name': 'Enter project name:',
+        'project_exists_use': "Project '{}' already exists.\nDo you want to use it?",
     },
     'ar': {
-        'title': 'منزل المواقع',
+        'title': 'WebSitePocket',
         'project': ':المشروع',
         'new_project': 'مشروع جديد',
         'create_new': 'إنشاء مشروع جديد',
@@ -62,6 +68,7 @@ TRANSLATIONS = {
         'project_exists': 'المشروع موجود',
         'want_redownload': 'هل تريد إعادة تحميل جميع الملفات؟',
         'download_success': 'تم التحميل بنجاح!',
+        'download_completed': '!تم التنزيل بنجاح',
         'time_remain': 'الوقت المتبقي',
         'create_new_project': 'إنشاء مشروع جديد',
         'url': 'الرابط',
@@ -70,5 +77,10 @@ TRANSLATIONS = {
         'Time remaining': 'الوقت المتبقي',
         'Current file': 'الملف الحالي',
         'git_project': 'مشروع GitHub',
+        'yes': 'نعم',
+        'no': 'لا',
+        'project_exists_msg': "المشروع '{}' موجود بالفعل.\nهل تريد إعادة تنزيل جميع الملفات؟",
+        'enter_project_name': 'أدخل اسم المشروع:',
+        'project_exists_use': "المشروع '{}' موجود بالفعل.\nهل تريد استخدامه؟",
     }
 }
