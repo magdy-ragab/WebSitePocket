@@ -5,11 +5,12 @@ from PyQt5.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout,
                             QHBoxLayout, QPushButton, QLineEdit, QTextEdit, 
                             QLabel, QComboBox, QCheckBox, QProgressBar, 
                             QMessageBox, QFileDialog, QInputDialog, QTableWidget,
-                            QTableWidgetItem, QHeaderView, QSizePolicy)
+                            QTableWidgetItem, QHeaderView, QSizePolicy, QDialog)
 from PyQt5.QtCore import Qt, QThread, pyqtSignal
 from PyQt5.QtGui import QIcon, QFontDatabase, QFont, QColor
 from download import WebDownloader
 from translations import TRANSLATIONS
+from common import WebSitePocketCommon
 
 class DownloaderThread(QThread):
     progress = pyqtSignal(int, int)  # current, total
@@ -26,25 +27,196 @@ class DownloaderThread(QThread):
         self.current_row = current_row
         self.is_running = True
 
+    def stop(self):
+        """Stop the download thread"""
+        self.downloader.abort = True
+        self.is_running = False
+        self.wait()
+
     def run(self):
         try:
             url = self.urls[self.current_row]
             self.status.emit(f"Processing {url}")
             
             def progress_callback(current, total):
+                if not self.is_running:
+                    return
                 self.progress.emit(current, total)
             
             def file_callback(current, total, filename):
+                if not self.is_running:
+                    return
                 self.file_progress.emit(current, total, filename)
             
             self.downloader.set_progress_callback(progress_callback)
             self.downloader.set_file_callback(file_callback)
             self.downloader.download_page(url)
             
-            self.url_completed.emit(self.current_row)
-            self.finished.emit()
+            if self.is_running:
+                self.url_completed.emit(self.current_row)
+                self.finished.emit()
         except Exception as e:
             self.error.emit(str(e), self.current_row)
+
+class RemoveProjectDialog(QDialog):
+    def __init__(self, projects, tr, parent=None):
+        super().__init__(parent)
+        self.projects = projects
+        self.tr = tr
+        self.selected_project = None
+        self.remove_folder = False
+        self.project_info = None
+        
+        self.setWindowTitle(self.tr['remove_project'])
+        self.setModal(True)
+        self.setMinimumWidth(450)
+        self.setMinimumHeight(350)
+        
+        self.setup_ui()
+        
+    def setup_ui(self):
+        layout = QVBoxLayout(self)
+        
+        # Project selection
+        selection_layout = QVBoxLayout()
+        selection_label = QLabel(self.tr['select_project_remove'])
+        selection_layout.addWidget(selection_label)
+        
+        self.project_combo = QComboBox()
+        self.project_combo.addItem("-- Select Project --")
+        for project_name in self.projects.keys():
+            self.project_combo.addItem(project_name)
+        self.project_combo.currentTextChanged.connect(self.on_project_changed)
+        selection_layout.addWidget(self.project_combo)
+        
+        layout.addLayout(selection_layout)
+        
+        # Project information display
+        self.info_widget = QWidget()
+        self.info_widget.setStyleSheet("""
+            QWidget {
+                border: 1px solid #ccc;
+                border-radius: 5px;
+                background-color: #f9f9f9;
+                margin: 5px;
+                padding: 5px;
+            }
+        """)
+        self.info_layout = QVBoxLayout(self.info_widget)
+        
+        info_label = QLabel("Project Information:")
+        info_label.setStyleSheet("font-weight: bold; margin-top: 10px;")
+        self.info_layout.addWidget(info_label)
+        
+        self.project_name_label = QLabel()
+        self.url_count_label = QLabel()
+        self.folder_size_label = QLabel()
+        self.created_label = QLabel()
+        
+        # Style the info labels
+        label_style = "padding: 2px; margin: 1px; color: #333;"
+        self.project_name_label.setStyleSheet(label_style)
+        self.url_count_label.setStyleSheet(label_style)
+        self.folder_size_label.setStyleSheet(label_style)
+        self.created_label.setStyleSheet(label_style)
+        
+        self.info_layout.addWidget(self.project_name_label)
+        self.info_layout.addWidget(self.url_count_label)
+        self.info_layout.addWidget(self.folder_size_label)
+        self.info_layout.addWidget(self.created_label)
+        
+        # Options
+        self.remove_folder_cb = QCheckBox(self.tr['remove_folder_msg'])
+        self.remove_folder_cb.setStyleSheet("margin-top: 10px;")
+        self.info_layout.addWidget(self.remove_folder_cb)
+        
+        self.info_widget.setVisible(False)
+        layout.addWidget(self.info_widget)
+        
+        # Buttons
+        button_layout = QHBoxLayout()
+        button_layout.setContentsMargins(10, 15, 10, 10)
+        
+        self.remove_btn = QPushButton(self.tr['remove_project'])
+        self.remove_btn.setEnabled(False)
+        self.remove_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #dc3545;
+                color: white;
+                border: none;
+                padding: 8px 16px;
+                border-radius: 4px;
+                font-weight: bold;
+            }
+            QPushButton:hover {
+                background-color: #c82333;
+            }
+            QPushButton:disabled {
+                background-color: #cccccc;
+                color: #666666;
+            }
+        """)
+        self.remove_btn.clicked.connect(self.accept)
+        
+        cancel_btn = QPushButton(self.tr['no'])  # Using 'no' as cancel
+        cancel_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #6c757d;
+                color: white;
+                border: none;
+                padding: 8px 16px;
+                border-radius: 4px;
+            }
+            QPushButton:hover {
+                background-color: #5a6268;
+            }
+        """)
+        cancel_btn.clicked.connect(self.reject)
+        
+        button_layout.addWidget(cancel_btn)
+        button_layout.addWidget(self.remove_btn)
+        
+        layout.addLayout(button_layout)
+        
+    def on_project_changed(self, project_name):
+        if project_name == "-- Select Project --" or not project_name:
+            self.info_widget.setVisible(False)
+            self.remove_btn.setEnabled(False)
+            self.selected_project = None
+            return
+            
+        self.selected_project = project_name
+        
+        # Get project information
+        from download import WebDownloader
+        self.project_info = WebDownloader.get_project_info(project_name)
+        
+        if self.project_info:
+            # Format creation timestamp
+            timestamp = self.project_info['timestamp']
+            if timestamp != 'Unknown':
+                try:
+                    from datetime import datetime
+                    dt = datetime.fromisoformat(timestamp.replace('Z', '+00:00'))
+                    timestamp = dt.strftime('%Y-%m-%d %H:%M:%S')
+                except:
+                    pass
+            
+            # Update labels
+            self.project_name_label.setText(f"Name: {self.project_info['name']}")
+            self.url_count_label.setText(f"URLs: {self.project_info['url_count']}")
+            self.folder_size_label.setText(f"Folder size: {self.project_info['formatted_size']}")
+            self.created_label.setText(f"Created: {timestamp}")
+            
+            self.info_widget.setVisible(True)
+            self.remove_btn.setEnabled(True)
+        else:
+            self.info_widget.setVisible(False)
+            self.remove_btn.setEnabled(False)
+    
+    def get_result(self):
+        """Get the selected project and remove folder option"""
+        return self.selected_project, self.remove_folder_cb.isChecked()
 
 class MainWindow(QMainWindow):
     def __init__(self):
@@ -101,6 +273,10 @@ class MainWindow(QMainWindow):
         self.new_project_btn.clicked.connect(self.create_new_project)
         project_layout.addWidget(self.new_project_btn)
         
+        self.remove_project_btn = QPushButton(self.tr['remove_project'])
+        self.remove_project_btn.clicked.connect(self.remove_project)
+        project_layout.addWidget(self.remove_project_btn)
+        
         layout.addLayout(project_layout)
 
         # URL input
@@ -132,8 +308,10 @@ class MainWindow(QMainWindow):
         # Options
         options_layout = QHBoxLayout()
         self.replace_links_cb = QCheckBox(self.tr['replace_links'])
+        self.replace_links_cb.setChecked(True)  # Default to True
         options_layout.addWidget(self.replace_links_cb)
         self.replace_forms_cb = QCheckBox(self.tr['replace_forms'])
+        self.replace_forms_cb.setChecked(True)  # Default to True
         options_layout.addWidget(self.replace_forms_cb)
         layout.addLayout(options_layout)
 
@@ -237,6 +415,7 @@ class MainWindow(QMainWindow):
         """Update all UI text elements with current language"""
         self.setWindowTitle(self.tr['title'])
         self.new_project_btn.setText(self.tr['new_project'])
+        self.remove_project_btn.setText(self.tr['remove_project'])
         self.url_input.setPlaceholderText(self.tr['enter_url'])
         self.add_url_btn.setText(self.tr['add_url'])
         self.replace_links_cb.setText(self.tr['replace_links'])
@@ -253,7 +432,7 @@ class MainWindow(QMainWindow):
         current_item = self.project_combo.currentText()
         self.project_combo.clear()
         self.project_combo.addItem(self.tr['create_new_project'])
-        projects = WebDownloader.list_projects()
+        projects = WebSitePocketCommon.list_projects()
         for name in projects.keys():
             self.project_combo.addItem(name)
             
@@ -297,7 +476,7 @@ class MainWindow(QMainWindow):
     def load_projects(self):
         self.project_combo.clear()
         self.project_combo.addItem(self.tr['create_new_project'])
-        projects = WebDownloader.list_projects()
+        projects = WebSitePocketCommon.list_projects()
         for name in projects.keys():
             self.project_combo.addItem(name)
         self.project_combo.currentTextChanged.connect(self.on_project_selected)
@@ -333,8 +512,8 @@ class MainWindow(QMainWindow):
             # Reset URLs table for new project
             if not os.path.exists(project_dir):
                 self.urls_table.setRowCount(0)
-                self.replace_links_cb.setChecked(False)
-                self.replace_forms_cb.setChecked(False)
+                self.replace_links_cb.setChecked(True)  # Default to True
+                self.replace_forms_cb.setChecked(True)  # Default to True
 
             # Load existing URLs if project exists
             existing_project = WebDownloader.load_project(project_name)
@@ -342,6 +521,64 @@ class MainWindow(QMainWindow):
                 self.set_urls(existing_project.urls)
                 self.replace_links_cb.setChecked(existing_project.replace_links)
                 self.replace_forms_cb.setChecked(existing_project.replace_forms)
+
+    def remove_project(self):
+        """Remove a project with confirmation dialogs"""
+        projects = WebDownloader.list_projects()
+        if not projects:
+            QMessageBox.information(self, self.tr['no_projects'], self.tr['no_projects_msg'])
+            return
+        
+        # Show custom remove project dialog
+        dialog = RemoveProjectDialog(projects, self.tr, self)
+        
+        if dialog.exec_() == QDialog.Accepted:
+            project_name, remove_folder = dialog.get_result()
+            
+            if not project_name:
+                return
+            
+            # Final confirmation
+            msg_box = QMessageBox()
+            msg_box.setWindowTitle(self.tr['confirm_remove'])
+            
+            if remove_folder:
+                msg_text = f"Are you sure you want to remove project '{project_name}' and delete its folder?"
+            else:
+                msg_text = f"Are you sure you want to remove project '{project_name}' from the list?"
+            
+            msg_box.setText(msg_text)
+            msg_box.setIcon(QMessageBox.Question)
+            yes_btn = msg_box.addButton(self.tr['yes'], QMessageBox.YesRole)
+            no_btn = msg_box.addButton(self.tr['no'], QMessageBox.NoRole)
+            msg_box.exec_()
+            
+            if msg_box.clickedButton() == no_btn:
+                return
+            
+            # Remove the project
+            success, message = WebDownloader.remove_project(project_name, remove_folder)
+            
+            if success:
+                # Show success message
+                if remove_folder:
+                    QMessageBox.information(self, self.tr['project_removed'], 
+                                          self.tr['project_removed_with_folder'].format(project_name))
+                else:
+                    QMessageBox.information(self, self.tr['project_removed'], 
+                                          self.tr['project_removed_msg'].format(project_name))
+                
+                # Refresh the project combo box
+                self.load_projects()
+                
+                # Clear the URLs table if the removed project was selected
+                current_project = self.project_combo.currentText()
+                if current_project == project_name or current_project == self.tr['create_new_project']:
+                    self.urls_table.setRowCount(0)
+                    self.replace_links_cb.setChecked(True)
+                    self.replace_forms_cb.setChecked(True)
+            else:
+                QMessageBox.critical(self, self.tr['remove_error'], message)
 
     def set_status_item(self, row, status):
         """Set status icon and background colors for a row"""
@@ -494,8 +731,8 @@ class MainWindow(QMainWindow):
     def abort_download(self):
         if hasattr(self, 'thread'):
             self.thread.stop()
-            self.abort_btn.setEnabled(False)
-            self.progress_label.setText("Aborting...")
+            self.progress_label.setText(self.tr['aborting'])
+            self.download_finished()  # Clean up UI state after abort
 
     def update_progress(self, current, total):
         if total > 0:  # Prevent division by zero

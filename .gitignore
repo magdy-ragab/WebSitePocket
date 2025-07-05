@@ -1,4 +1,8 @@
 icon.webp
 __pycache__/
 myenv/
+venv/
 projects/
+downloader_gui.spec
+build/*
+dist/*

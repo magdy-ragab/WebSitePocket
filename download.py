@@ -6,16 +6,18 @@ from urllib.parse import urljoin, urlparse
 import re
 from tqdm import tqdm
 from datetime import datetime
+import platform
+from common import WebSitePocketCommon
 
 class WebDownloader:
     def __init__(self, project_name):
         self.project_name = project_name
-        self.base_dir = os.path.join(os.getcwd(), 'projects', project_name)
-        self.links_file = os.path.join(self.base_dir, 'links.json')
-        self.projects_file = os.path.join(os.getcwd(), 'projects', 'projects.json')
+        self.base_dir = WebSitePocketCommon.get_project_base_dir(project_name)
+        self.links_file = WebSitePocketCommon.get_links_file_path(project_name)
+        self.projects_file = WebSitePocketCommon.get_projects_file_path()
         self.urls = []
-        self.replace_links = False
-        self.replace_forms = False
+        self.replace_links = True  # Default to True - replace links with #
+        self.replace_forms = True  # Default to True - replace forms with #
         self.total_files = 0
         self.progress_callback = None
         self.file_callback = None
@@ -31,87 +33,71 @@ class WebDownloader:
 
     def setup_directories(self):
         """Create project directories"""
-        directories = ['images', 'js', 'css', 'fonts']
-        os.makedirs(self.base_dir, exist_ok=True)
-        for dir_name in directories:
-            os.makedirs(os.path.join(self.base_dir, dir_name), exist_ok=True)
+        WebSitePocketCommon.setup_project_directories(self.base_dir)
 
     def save_links(self):
         """Save URLs to JSON file"""
-        with open(self.links_file, 'w') as f:
-            json.dump({'urls': self.urls}, f, indent=4)
+        WebSitePocketCommon.save_links_to_json(self.urls, self.links_file)
 
     def save_project_data(self):
         """Save project data to projects.json"""
-        projects_data = self.load_projects_data()
-        projects_data[self.project_name] = {
-            'urls': self.urls,
-            'replace_links': self.replace_links,
-            'replace_forms': self.replace_forms,
-            'timestamp': datetime.now().isoformat(),
-            'base_dir': self.base_dir
-        }
-        
-        os.makedirs(os.path.dirname(self.projects_file), exist_ok=True)
-        with open(self.projects_file, 'w') as f:
-            json.dump(projects_data, f, indent=4)
+        WebSitePocketCommon.save_project_data(
+            self.project_name, self.urls, self.replace_links, 
+            self.replace_forms, self.base_dir
+        )
 
     def load_projects_data(self):
         """Load all projects data"""
-        try:
-            with open(self.projects_file, 'r') as f:
-                return json.load(f)
-        except:
-            return {}
+        return WebSitePocketCommon.load_projects_data()
 
     @classmethod
     def list_projects(cls):
         """List all saved projects"""
-        projects_file = os.path.join(os.getcwd(), 'projects', 'projects.json')
-        try:
-            with open(projects_file, 'r') as f:
-                projects = json.load(f)
-            return projects
-        except:
-            return {}
+        return WebSitePocketCommon.list_projects()
 
     @classmethod
     def load_project(cls, project_name):
         """Load existing project"""
-        projects = cls.list_projects()
-        if project_name in projects:
+        project_data = WebSitePocketCommon.load_project_data(project_name)
+        if project_data:
             downloader = cls(project_name)
-            project_data = projects[project_name]
             downloader.urls = project_data['urls']
             downloader.replace_links = project_data['replace_links']
-            downloader.replace_forms = project_data.get('replace_forms', False)  # Default False for backward compatibility
+            downloader.replace_forms = project_data.get('replace_forms', True)  # Default True
             return downloader
         return None
 
+    @classmethod
+    def remove_project(cls, project_name, remove_folder=False):
+        """Remove a project and optionally delete its folder"""
+        return WebSitePocketCommon.remove_project(project_name, remove_folder)
+
+    @classmethod
+    def get_project_info(cls, project_name):
+        """Get project information including folder size"""
+        project_data = WebSitePocketCommon.load_project_data(project_name)
+        if not project_data:
+            return None
+        
+        folder_size = WebSitePocketCommon.get_project_folder_size(project_name)
+        formatted_size = WebSitePocketCommon.format_file_size(folder_size)
+        
+        return {
+            'name': project_name,
+            'urls': project_data['urls'],
+            'url_count': len(project_data['urls']),
+            'folder_size': folder_size,
+            'formatted_size': formatted_size,
+            'timestamp': project_data.get('timestamp', 'Unknown'),
+            'replace_links': project_data.get('replace_links', True),
+            'replace_forms': project_data.get('replace_forms', True)
+        }
+
     def download_file(self, url, local_path, position=1):
         """Download a file from URL with nested progress bar"""
-        try:
-            response = requests.get(url, stream=True)
-            total_size = int(response.headers.get('content-length', 0))
-            downloaded = 0
-            filename = os.path.basename(local_path)
-            
-            if self.file_callback:
-                self.file_callback(downloaded, total_size, filename)
-            
-            with open(local_path, 'wb') as f:
-                for data in response.iter_content(chunk_size=1024):
-                    if self.abort:
-                        return False
-                    size = f.write(data)
-                    downloaded += size
-                    if self.file_callback:
-                        self.file_callback(downloaded, total_size, filename)
-                        
-            return True
-        except Exception as e:
-            print(f"Error downloading {url}: {e}")
-            return False
+        return WebSitePocketCommon.download_file_with_progress(
+            url, local_path, self.file_callback, lambda: self.abort
+        )
 
     def count_total_files(self, url):
         """Count total number of files to download"""
@@ -185,15 +171,13 @@ class WebDownloader:
                      position=0, colour='red', leave=False,
                      bar_format='{l_bar}{bar}| {n_fmt}/{total_fmt} [{elapsed}<{remaining}]') as main_pbar:
                 
-                # Replace all links if option is enabled
+                # Replace all links with # by default
                 if self.replace_links:
-                    for link in soup.find_all('a'):
-                        link['href'] = '#'
+                    WebSitePocketCommon.replace_links_with_hash(soup)
                 
-                # Replace all form actions if option is enabled
+                # Replace all form actions with # by default
                 if self.replace_forms:
-                    for form in soup.find_all('form'):
-                        form['action'] = '#'
+                    WebSitePocketCommon.replace_forms_with_hash(soup)
                 
                 # Download images
                 images = soup.find_all('img')
@@ -291,12 +275,93 @@ class WebDownloader:
             print(f"Error processing {url}: {e}")
 
 def main():
-    print("\nWebSitePocket")
+    print("""
+__        __         _       ____                   _             _   
+\ \      / /   ___  | |__   |  _ \    ___     ___  | | __   ___  | |_ 
+ \ \ /\ / /   / _ \ | '_ \  | |_) |  / _ \   / __| | |/ /  / _ \ | __|
+  \ V  V /   |  __/ | |_) | |  __/  | (_) | | (__  |   <  |  __/ | |_ 
+   \_/\_/     \___| |_.__/  |_|      \___/   \___| |_|\_\  \___|  \__|
+                                                                      
+    """)
+    print("WebSitePocket - Website Download Tool")
     print("1. Create new project")
-    print("2. Load existing project")
-    choice = input("Enter your choice (1/2): ")
+    print("2. Load existing project") 
+    print("3. Launch GUI")
+    print("4. Remove project")
+    choice = input("Enter your choice (1/2/3/4): ")
 
-    if choice == '2':
+    if choice == '3':
+        # Launch GUI
+        gui_file = 'downloader_gui.py'
+        if not os.path.exists(gui_file):
+            print(f"Error: {gui_file} not found in current directory.")
+            return
+            
+        try:
+            import subprocess
+            import sys
+            print("Launching GUI...")
+            subprocess.run([sys.executable, gui_file])
+            return
+        except Exception as e:
+            print(f"Error launching GUI: {e}")
+            print("Make sure PyQt5 is installed and downloader_gui.py is available.")
+            return
+    elif choice == '4':
+        # Remove project
+        projects = WebDownloader.list_projects()
+        if not projects:
+            print("No existing projects found.")
+            return
+        
+        # Store projects in a list to maintain order
+        project_list = list(projects.items())
+        print("\nExisting projects:")
+        for i, (name, data) in enumerate(project_list, 1):
+            project_info = WebDownloader.get_project_info(name)
+            size_info = f" - {project_info['formatted_size']}" if project_info else ""
+            print(f"{i}. {name} ({len(data['urls'])} URLs{size_info})")
+        
+        project_input = input("\nEnter project number or name to remove: ")
+        
+        # Try to load by number first
+        try:
+            idx = int(project_input) - 1
+            if 0 <= idx < len(project_list):
+                project_name = project_list[idx][0]
+            else:
+                project_name = project_input
+        except ValueError:
+            project_name = project_input
+        
+        # Check if project exists
+        if project_name not in projects:
+            print(f"Project '{project_name}' not found.")
+            return
+        
+        # Show project info
+        project_info = WebDownloader.get_project_info(project_name)
+        if project_info:
+            print(f"\nProject: {project_info['name']}")
+            print(f"URLs: {project_info['url_count']}")
+            print(f"Folder size: {project_info['formatted_size']}")
+            print(f"Created: {project_info['timestamp']}")
+        
+        # Confirm removal
+        confirm = input(f"\nAre you sure you want to remove project '{project_name}'? (y/N): ").lower().strip()
+        if confirm != 'y':
+            print("Operation cancelled.")
+            return
+        
+        # Ask about folder removal
+        remove_folder = input("Also delete project folder and all downloaded files? (y/N): ").lower().strip()
+        remove_folder = remove_folder == 'y'
+        
+        # Remove project
+        success, message = WebDownloader.remove_project(project_name, remove_folder)
+        print(message)
+        return
+    elif choice == '2':
         # Show existing projects
         projects = WebDownloader.list_projects()
         if not projects:
@@ -325,18 +390,18 @@ def main():
         if not downloader:
             print(f"Project '{project_name}' not found.")
             return
-    else:
+    elif choice == '1':
         # Create new project
         project_name = input("Enter project name: ")
         downloader = WebDownloader(project_name)
         
-        # Ask about replacing links
-        replace_links = input("Replace all links with href='#'? (y/n): ").lower().strip()
-        downloader.replace_links = replace_links == 'y'
+        # Ask about replacing links (default Yes)
+        replace_links = input("Replace all links with href='#'? (Y/n): ").lower().strip()
+        downloader.replace_links = replace_links != 'n'
         
-        # Ask about replacing form actions
-        replace_forms = input("Replace all form actions with action='#'? (y/n): ").lower().strip()
-        downloader.replace_forms = replace_forms == 'y'
+        # Ask about replacing form actions (default Yes)  
+        replace_forms = input("Replace all form actions with action='#'? (Y/n): ").lower().strip()
+        downloader.replace_forms = replace_forms != 'n'
         
         # Get URLs
         while True:
@@ -347,6 +412,9 @@ def main():
         
         # Save project data
         downloader.save_project_data()
+    else:
+        print("Invalid choice. Please select 1, 2, 3, or 4.")
+        return
     
     # Process URLs
     for url in tqdm(downloader.urls, desc="Processing URLs"):
