@@ -16,6 +16,7 @@ class DownloaderThread(QThread):
     progress = pyqtSignal(int, int)  # current, total
     file_progress = pyqtSignal(int, int, str)  # current, total, filename
     url_completed = pyqtSignal(int)  # row index
+    url_saved = pyqtSignal(int, str)  # row index, saved filename
     status = pyqtSignal(str)
     finished = pyqtSignal()
     error = pyqtSignal(str, int)  # error message, row index
@@ -54,6 +55,9 @@ class DownloaderThread(QThread):
             
             if self.is_running:
                 self.url_completed.emit(self.current_row)
+                # Emit the saved filename
+                if url in self.downloader.url_filename_mapping:
+                    self.url_saved.emit(self.current_row, self.downloader.url_filename_mapping[url])
                 self.finished.emit()
         except Exception as e:
             self.error.emit(str(e), self.current_row)
@@ -291,16 +295,18 @@ class MainWindow(QMainWindow):
 
         # URLs list - replace QTextEdit with QTableWidget
         self.urls_table = QTableWidget()
-        self.urls_table.setColumnCount(2)
-        self.urls_table.setHorizontalHeaderLabels([self.tr['status'], self.tr['url']])
+        self.urls_table.setColumnCount(3)
+        self.urls_table.setHorizontalHeaderLabels([self.tr['status'], self.tr['url'], self.tr['saved_as']])
         # Always set status column to 50px regardless of language
         if self.current_lang == 'ar':
-            self.urls_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.Fixed)
-            self.urls_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.Stretch)
-            self.urls_table.setColumnWidth(1, 50)  # Status column is second in RTL
+            self.urls_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.Stretch)
+            self.urls_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.Fixed)
+            self.urls_table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeToContents)
+            self.urls_table.setColumnWidth(0, 50)  # Status column is first in RTL
         else:
             self.urls_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.Fixed)
             self.urls_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.Stretch)
+            self.urls_table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeToContents)
             self.urls_table.setColumnWidth(0, 50)  # Status column is first column in LTR
         self.urls_table.setEditTriggers(QTableWidget.NoEditTriggers)  # Make table uneditable
         layout.addWidget(self.urls_table)
@@ -426,7 +432,7 @@ class MainWindow(QMainWindow):
         self.progress_label.setText(self.tr['ready'])
         self.file_label.setText(f"{self.tr['current_file']}{self.tr['none']}")
         self.time_label.setText(f"{self.tr['time_remain']}: --:--")  # Update time label
-        self.urls_table.setHorizontalHeaderLabels([self.tr['status'], self.tr['url']])  # Update table headers
+        self.urls_table.setHorizontalHeaderLabels([self.tr['status'], self.tr['url'], self.tr['saved_as']])  # Update table headers
 
         # Update project combo items
         current_item = self.project_combo.currentText()
@@ -454,7 +460,7 @@ class MainWindow(QMainWindow):
             # Special case for time label
             self.time_label.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
             # Set status column width to 50px
-            self.urls_table.setColumnWidth(1, 50)  # Status is second column in RTL
+            self.urls_table.setColumnWidth(0, 50)  # Status is first column in RTL
             
         else:
             self.setLayoutDirection(Qt.LeftToRight)
@@ -596,6 +602,20 @@ class MainWindow(QMainWindow):
             url_item = self.urls_table.item(row, 1)
             if url_item:
                 url_item.setBackground(QColor(self.STATUS_COLORS[status]))
+            # Set "Saved as" column background only if item exists
+            saved_as_item = self.urls_table.item(row, 2)
+            if saved_as_item:
+                saved_as_item.setBackground(QColor(self.STATUS_COLORS[status]))
+
+    def update_saved_as(self, row, filename):
+        """Update the 'Saved as' column for a specific row"""
+        saved_as_item = QTableWidgetItem(filename)
+        self.urls_table.setItem(row, 2, saved_as_item)
+        # Apply current row background color if any
+        current_status_item = self.urls_table.item(row, 0)
+        if current_status_item:
+            bg_color = current_status_item.background()
+            saved_as_item.setBackground(bg_color)
 
     def add_url(self):
         url = self.url_input.text().strip()
@@ -604,6 +624,7 @@ class MainWindow(QMainWindow):
             self.urls_table.insertRow(row)
             self.set_status_item(row, 'default')
             self.urls_table.setItem(row, 1, QTableWidgetItem(url))
+            self.urls_table.setItem(row, 2, QTableWidgetItem(""))  # Empty "Saved as" column initially
             self.url_input.clear()
 
     def get_urls(self):
@@ -619,6 +640,7 @@ class MainWindow(QMainWindow):
             self.urls_table.insertRow(row)
             self.set_status_item(row, 'default')
             self.urls_table.setItem(row, 1, QTableWidgetItem(url))
+            self.urls_table.setItem(row, 2, QTableWidgetItem(""))  # Empty "Saved as" column initially
 
     def start_download(self):
         if self.downloading:
@@ -676,10 +698,14 @@ class MainWindow(QMainWindow):
                 self.set_status_item(row, 'completed')  # Mark as active/downloading
                 self.urls_table.item(row, 0).setBackground(QColor('#90EE90'))  # Light green
                 self.urls_table.item(row, 1).setBackground(QColor('#90EE90'))
+                if self.urls_table.item(row, 2):
+                    self.urls_table.item(row, 2).setBackground(QColor('#90EE90'))
             else:
                 self.set_status_item(row, 'waiting')
                 self.urls_table.item(row, 0).setBackground(QColor('#FFE599'))  # Light yellow
                 self.urls_table.item(row, 1).setBackground(QColor('#FFE599'))
+                if self.urls_table.item(row, 2):
+                    self.urls_table.item(row, 2).setBackground(QColor('#FFE599'))
 
         # Start downloading first URL
         self.current_row = 0
@@ -699,6 +725,7 @@ class MainWindow(QMainWindow):
         self.thread.file_progress.connect(self.update_file_progress)
         self.thread.status.connect(self.update_status)
         self.thread.url_completed.connect(self.url_completed)
+        self.thread.url_saved.connect(self.update_saved_as)
         self.thread.finished.connect(self.check_next_url)
         self.thread.error.connect(self.handle_error)
         self.thread.start()
@@ -718,12 +745,16 @@ class MainWindow(QMainWindow):
         self.set_status_item(self.current_row, 'completed')
         self.urls_table.item(self.current_row, 0).setBackground(QColor(self.STATUS_COLORS['done']))
         self.urls_table.item(self.current_row, 1).setBackground(QColor(self.STATUS_COLORS['done']))
+        if self.urls_table.item(self.current_row, 2):
+            self.urls_table.item(self.current_row, 2).setBackground(QColor(self.STATUS_COLORS['done']))
         
         self.current_row += 1
         if self.current_row < len(self.urls):
             # Highlight new current URL
             self.urls_table.item(self.current_row, 0).setBackground(QColor(self.STATUS_COLORS['completed']))
             self.urls_table.item(self.current_row, 1).setBackground(QColor(self.STATUS_COLORS['completed']))
+            if self.urls_table.item(self.current_row, 2):
+                self.urls_table.item(self.current_row, 2).setBackground(QColor(self.STATUS_COLORS['completed']))
             self.start_url_download()
         else:
             self.download_finished()

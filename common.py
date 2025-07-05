@@ -191,3 +191,56 @@ class WebSitePocketCommon:
             i += 1
         
         return f"{size_bytes:.1f} {size_names[i]}"
+
+    @staticmethod
+    def generate_html_filename(url, existing_files=None):
+        """Generate a unique HTML filename for a URL"""
+        if existing_files is None:
+            existing_files = set()
+        
+        parsed_url = urlparse(url)
+        
+        # Get the path part
+        path = parsed_url.path.strip('/')
+        
+        # Handle different URL patterns
+        if not path or path == '':
+            # Root URL like https://example.com/
+            filename = 'index.html'
+        elif path.endswith('/'):
+            # Directory URL like https://example.com/ar/
+            # Use the last directory name
+            dir_name = path.rstrip('/').split('/')[-1]
+            filename = f"{dir_name}.html"
+        elif '.' in path.split('/')[-1]:
+            # File with extension like https://example.com/page.php
+            file_part = path.split('/')[-1]
+            if not file_part.endswith('.html'):
+                filename = file_part + '.html'
+            else:
+                filename = file_part
+        else:
+            # Path without extension like https://example.com/product/item-name
+            # Use the full path, replacing slashes with underscores
+            filename = path.replace('/', '_') + '.html'
+        
+        # Handle query parameters if present
+        if parsed_url.query:
+            # Add a hash of the query to make it unique
+            import hashlib
+            query_hash = hashlib.md5(parsed_url.query.encode()).hexdigest()[:8]
+            name_part, ext = os.path.splitext(filename)
+            filename = f"{name_part}_{query_hash}{ext}"
+        
+        # Ensure filename is valid for filesystem
+        filename = "".join(c for c in filename if c.isalnum() or c in '._-')
+        
+        # Handle duplicates
+        base_filename = filename
+        counter = 1
+        while filename in existing_files:
+            name_part, ext = os.path.splitext(base_filename)
+            filename = f"{name_part}_{counter}{ext}"
+            counter += 1
+        
+        return filename

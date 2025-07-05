@@ -22,6 +22,8 @@ class WebDownloader:
         self.progress_callback = None
         self.file_callback = None
         self.abort = False
+        self.html_files = set()  # Track existing HTML files to avoid conflicts
+        self.url_filename_mapping = {}  # Track URL to filename mapping
         self.setup_directories()
 
     def set_progress_callback(self, callback):
@@ -259,20 +261,51 @@ class WebDownloader:
 
                 # Save updated HTML
                 print("\nSaving HTML file...")
-                page_name = os.path.basename(urlparse(url).path)
-                if not page_name:
-                    page_name = 'index.html'
-                elif not page_name.endswith('.html'):
-                    page_name += '.html'
+                page_name = WebSitePocketCommon.generate_html_filename(url, self.html_files)
+                self.html_files.add(page_name)
+                self.url_filename_mapping[url] = page_name
                     
                 with open(os.path.join(self.base_dir, page_name), 'w', encoding='utf-8') as f:
                     f.write(str(soup))
+                
+                print(f"Saved as: {page_name}")
                 
                 # Clear all progress bars after completion
                 print('\n\033[K', end='')  # Move to new line and clear it
 
         except Exception as e:
             print(f"Error processing {url}: {e}")
+
+    def display_download_summary(self):
+        """Display a summary table of downloaded URLs and their filenames"""
+        if not self.url_filename_mapping:
+            return
+        
+        print("\n" + "="*80)
+        print("DOWNLOAD SUMMARY")
+        print("="*80)
+        
+        # Calculate column widths
+        max_url_length = max(len(url) for url in self.url_filename_mapping.keys())
+        max_filename_length = max(len(filename) for filename in self.url_filename_mapping.values())
+        
+        # Ensure minimum widths and reasonable maximums
+        url_width = max(min(max_url_length, 60), 20)
+        filename_width = max(min(max_filename_length, 40), 15)
+        
+        # Headers
+        print(f"{'URL':<{url_width}} | {'SAVED AS':<{filename_width}}")
+        print("-" * url_width + "-+-" + "-" * filename_width)
+        
+        # Data rows
+        for url, filename in self.url_filename_mapping.items():
+            # Truncate URL if too long
+            display_url = url if len(url) <= url_width else url[:url_width-3] + "..."
+            print(f"{display_url:<{url_width}} | {filename:<{filename_width}}")
+        
+        print("="*80)
+        print(f"Total files downloaded: {len(self.url_filename_mapping)}")
+        print()
 
 def main():
     print("""
@@ -422,6 +455,9 @@ __        __         _       ____                   _             _
         downloader.download_page(url)
         print(f"Finished processing {url}")
         print("-" * 50)
+
+    # Display summary table
+    downloader.display_download_summary()
 
 if __name__ == "__main__":
     main()
